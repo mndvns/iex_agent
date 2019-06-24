@@ -10,8 +10,11 @@ defmodule IExAgent do
         z: 0, z: 1,
         iex_list: 0,
         iex_clean: 0,
+        iex_reset: 0,
+        iex_shift: 0,
+        iex_pop: 0,
         iex_set: 1,
-        iex_shift: 1,
+        iex_unshift: 1,
         iex_push: 1,
         iex_prepend: 1,
         iex_append: 1,
@@ -45,8 +48,11 @@ defmodule IExAgent do
 
   defdelegate iex_list(), to: __MODULE__, as: :list
   defdelegate iex_clean(), to: __MODULE__, as: :clean
+  defdelegate iex_reset(), to: __MODULE__, as: :reset
+  defdelegate iex_shift(), to: __MODULE__, as: :shift
+  defdelegate iex_pop(), to: __MODULE__, as: :pop
   defdelegate iex_set(module), to: __MODULE__, as: :set
-  defdelegate iex_shift(module), to: __MODULE__, as: :shift
+  defdelegate iex_unshift(module), to: __MODULE__, as: :unshift
   defdelegate iex_push(module), to: __MODULE__, as: :push
   defdelegate iex_prepend(module), to: __MODULE__, as: :prepend
   defdelegate iex_append(module), to: __MODULE__, as: :append
@@ -108,9 +114,15 @@ defmodule IExAgent do
 
   def list(), do: Agent.get(__MODULE__, & &1)
 
-  def set(module), do: update(module, fn _, newstate -> newstate end)
+  def set(module), do: update(module)
 
-  def shift(module), do: update(module, &(&2 ++ (&1 -- &2)))
+  def reset(), do: update([])
+
+  def shift(), do: update(&List.pop_at(&1, 0))
+
+  def pop(), do: update(&List.pop_at(&1, :erlang.max(0, length(&1) - 1)))
+
+  def unshift(module), do: update(module, &(&2 ++ (&1 -- &2)))
 
   def push(module), do: update(module, &((&1 -- &2) ++ &2))
 
@@ -120,16 +132,30 @@ defmodule IExAgent do
 
   def delete(module), do: update(module, &(&1 -- &2))
 
+  defp update(modules, fun \\ nil)
+  defp update(modules, nil) do
+    update(modules, fn _, _ -> modules end)
+  end
+  defp update(fun, _) when is_function(fun) do
+    update([], fun)
+  end
+  defp update(module, fun) when is_function(fun, 1) do
+    update(module, fn oldstate, _ -> fun.(oldstate) end)
+  end
   defp update(module, fun) when is_atom(module) do
     update([module], fun)
   end
-
   defp update(modules, fun) when is_list(modules) do
-    Agent.get_and_update(__MODULE__, fn state ->
-      newstate = fun.(state, modules) |> Enum.uniq()
-      {newstate, newstate}
+    Agent.get_and_update(__MODULE__, fn oldstate ->
+      case fun.(oldstate, modules) do
+        {return, newstate} ->
+          newstate = Enum.uniq(newstate)
+          {{return, newstate}, write(newstate)}
+        newstate ->
+          newstate = Enum.uniq(newstate)
+          {newstate, write(newstate)}
+      end
     end)
-    |> write()
   end
 
   def clean() do
